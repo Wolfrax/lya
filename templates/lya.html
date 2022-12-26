@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+
+    <link rel="shortcut icon" href="https://www.viltstigen.se/favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-KyZXEAg3QhqLMpG8r+8fhAXLRk2vvoC2f3B09zVXn8CA5QIVfZOJ3BCsw2P0p/We" crossorigin="anonymous">
+    <script type="text/javascript" charset="utf8" src="https://code.highcharts.com/highcharts.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+    <script src="{{ url_for('static', filename='lya.js') }}"></script>
+</head>
+<body>
+
+<div class="container-fluid">
+    <h1>{{ title }}</h1>
+    <hr>
+
+    <figure class="highcharts-figure">
+        <div id="Sensor1"></div>
+    </figure>
+
+    <br>
+
+    <div id="Sensor1_Max"></div>
+    <div id="Sensor1_Min"></div>
+
+    <hr>
+
+    <figure class="highcharts-figure">
+        <div id="Sensor2"></div>
+    </figure>
+
+    <br>
+
+    <div id="Sensor2_Max"></div>
+    <div id="Sensor2_Min"></div>
+
+    {% block content %}
+    {% endblock %}
+</div>
+
+{% block main %}
+    <script>
+        $(document).ready(function () {
+            plot();
+        });
+    </script>
+{% endblock %}
+
+<br><br>
+
+<footer>
+    <p style="font-size:12px">
+        Copyright (C) Mats Melander
+    </p>
+</footer>
+</body>
+</html>
