@@ -36,7 +36,8 @@ function plot() {
             }
         });
         chart("Sensor1",
-            "Orangerie (" + temp + "°C, " + json.Sensor1[json.Sensor1.length - 1].humidity + "%)",
+            "Orangerie (" + temp + "°C, " + json.Sensor1[json.Sensor1.length - 1].humidity + "% @ " +
+            json.Sensor1[json.Sensor1.length - 1].time + ")",
             sensor1);
 
         $("#Sensor1_Max").html(
@@ -70,7 +71,8 @@ function plot() {
             }
         });
         chart('Sensor2',
-            "Sensor 2 (" + temp + "°C, " + json.Sensor2[json.Sensor2.length - 1].humidity + "%)",
+            "Sensor 2 (" + temp + "°C, " + json.Sensor2[json.Sensor2.length - 1].humidity + "% @ " +
+            json.Sensor2[json.Sensor2.length - 1].time + ")",
             sensor2);
 
         $("#Sensor2_Max").html(

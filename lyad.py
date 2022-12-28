@@ -20,7 +20,12 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 
 handler = RotatingFileHandler(filename='lyad.log', maxBytes=2000000, backupCount=5)
 handler.setFormatter(formatter)
+handler.setLevel(logging.DEBUG)
 _LOGGER.addHandler(handler)
+
+http_handler = logging.handlers.HTTPHandler('rpi2.local:3000', '/log', method='POST',)
+http_handler.setLevel(logging.DEBUG)
+_LOGGER.addHandler(http_handler)
 
 # You can run rtl_433 and this script on different machines,
 # start rtl_433 with `-F http:0.0.0.0`, and change
@@ -37,12 +42,15 @@ def stream_lines():
 
     # You will receive JSON events, one per line terminated with CRLF.
     # On Events and Stream endpoints a keep-alive of CRLF will be sent every 60 seconds.
-    response = requests.get(url, headers=headers, timeout=70, stream=True)
-    _LOGGER.info(f'Connected to {url}')
-    print(f'Connected to {url}')
+    try:
+        response = requests.get(url, headers=headers, timeout=70, stream=True)
+        _LOGGER.info(f'Connected to {url}')
 
-    for chunk in response.iter_lines():
-        yield chunk
+        for chunk in response.iter_lines():
+            yield chunk
+    except requests.exceptions.Timeout:
+        _LOGGER.warning(f'{url} timeout')
+        pass
 
 
 def handle_event(line, db):
@@ -56,7 +64,7 @@ def handle_event(line, db):
         #
 
         # Round to minute
-        tm = datetime.strptime(data['time'], '%Y-%m-%d %H:%M:%S')
+        tm = datetime.strptime(data['time'], '%Y-%m-%d %H:%M:%S.%f')
         tm = tm.replace(second=0, microsecond=0) + timedelta(minutes=tm.second // 30)
         data['time'] = tm.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -67,10 +75,13 @@ def handle_event(line, db):
         else:
             label = "Unknown"
 
+        # Note copy a subset of data keys (omitted: 'mic', 'mod', 'freq', 'rssi', 'snr', 'noise')
+        data = {key: data[key] for key in ['time', 'protocol', 'description', 'model',
+                                           'id', 'channel', 'battery_ok', 'temperature_C', 'humidity']}
         if data not in db[label]:
             db[label].append(data)
 
-        # Remove all elements older than 1 day
+        # Remove all elements older than 7 day
         for k in db.keys():
             if db[k]:
                 newest = datetime.strptime(db[k][-1]['time'], '%Y-%m-%d %H:%M:%S')
@@ -99,6 +110,8 @@ def rtl_433_listen():
     try:
         with open(JSON_FN, "r") as f:
             db = json.load(f)
+        if not db:
+            db = {'Sensor1': [], 'Sensor2': [], 'Unknown': []}
     except FileNotFoundError:
         db = {'Sensor1': [], 'Sensor2': [], 'Unknown': []}
 
