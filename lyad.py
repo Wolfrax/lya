@@ -23,9 +23,9 @@ handler.setFormatter(formatter)
 handler.setLevel(logging.DEBUG)
 _LOGGER.addHandler(handler)
 
-http_handler = logging.handlers.HTTPHandler('rpi2.local:3000', '/log', method='POST',)
-http_handler.setLevel(logging.DEBUG)
-_LOGGER.addHandler(http_handler)
+#http_handler = logging.handlers.HTTPHandler('rpi2.local:3000', '/log', method='POST',)
+#http_handler.setLevel(logging.DEBUG)
+#_LOGGER.addHandler(http_handler)
 
 # You can run rtl_433 and this script on different machines,
 # start rtl_433 with `-F http:0.0.0.0`, and change
@@ -54,6 +54,7 @@ def stream_lines():
 
 
 def handle_event(line, db):
+    ok_flag = False
     try:
         # Decode the message as JSON
         data = json.loads(line)
@@ -63,8 +64,9 @@ def handle_event(line, db):
         # 'temperature_C': 19.16667, 'humidity': 34, 'mic': 'CHECKSUM'}
         #
 
-        # Round to minute
-        tm = datetime.strptime(data['time'], '%Y-%m-%d %H:%M:%S.%f')
+        # Round to minute, be robust if microseconds are included or not, check for decimal point
+        time_format = "%Y-%m-%d %H:%M:%S.%f" if '.' in data['time'] else "%Y-%m-%d %H:%M:%S"
+        tm = datetime.strptime(data['time'], time_format)
         tm = tm.replace(second=0, microsecond=0) + timedelta(minutes=tm.second // 30)
         data['time'] = tm.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -75,19 +77,19 @@ def handle_event(line, db):
         else:
             label = "Unknown"
 
-        # Note copy a subset of data keys (omitted: 'mic', 'mod', 'freq', 'rssi', 'snr', 'noise')
-        data = {key: data[key] for key in ['time', 'protocol', 'description', 'model',
-                                           'id', 'channel', 'battery_ok', 'temperature_C', 'humidity']}
-        if data not in db[label]:
+        # Avoid duplicate time stamped data (they often come in pair due to sensor transmitting
+        # For generator expression, see https://stackoverflow.com/questions/8653516/python-list-of-dictionaries-search
+        if next((item for item in db[label] if item['time'] == data['time']), None) is None:
             db[label].append(data)
 
         # Remove all elements older than 7 day
         for k in db.keys():
-            if db[k]:
+            if db[k] and k == label:
                 newest = datetime.strptime(db[k][-1]['time'], '%Y-%m-%d %H:%M:%S')
                 while (newest - datetime.strptime(db[k][0]['time'], '%Y-%m-%d %H:%M:%S')).days >= 7:
                     db[k] = db[k][1:]
 
+        ok_flag = True
         return db
 
     except KeyError:
@@ -99,9 +101,10 @@ def handle_event(line, db):
         _LOGGER.debug(f'Event format not recognized: {e}')
 
     finally:
-        with open(JSON_FN, "w") as f:
-            json.dump(db, f, indent=4)
-            f.flush()
+        if ok_flag:
+            with open(JSON_FN, "w") as f:
+                json.dump(db, f, indent=4)
+
 
 
 def rtl_433_listen():
