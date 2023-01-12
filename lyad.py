@@ -11,6 +11,7 @@ from time import sleep
 from datetime import datetime, timedelta
 import logging
 from logging.handlers import RotatingFileHandler
+import signal
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,9 +24,9 @@ handler.setFormatter(formatter)
 handler.setLevel(logging.DEBUG)
 _LOGGER.addHandler(handler)
 
-#http_handler = logging.handlers.HTTPHandler('rpi2.local:3000', '/log', method='POST',)
-#http_handler.setLevel(logging.DEBUG)
-#_LOGGER.addHandler(http_handler)
+http_handler = logging.handlers.HTTPHandler('www.viltstigen.se', '/logger/log', method='POST', secure=True)
+_LOGGER.addHandler(http_handler)
+
 
 # You can run rtl_433 and this script on different machines,
 # start rtl_433 with `-F http:0.0.0.0`, and change
@@ -77,7 +78,10 @@ def handle_event(line, db):
         else:
             label = "Unknown"
 
-        # Avoid duplicate time stamped data (they often come in pair due to sensor transmitting
+        if data['battery_ok'] != 1 and (label == "Sensor1" or label == "Sensor2"):
+            _LOGGER.warning("Battery status: {] for {}".format(data['battery_ok'], label))
+
+        # Avoid duplicate time stamped data (they often come in pair due to sensor transmitting)
         # For generator expression, see https://stackoverflow.com/questions/8653516/python-list-of-dictionaries-search
         if next((item for item in db[label] if item['time'] == data['time']), None) is None:
             db[label].append(data)
@@ -106,9 +110,21 @@ def handle_event(line, db):
                 json.dump(db, f, indent=4)
 
 
+class SigHandler:
+    exit = False
+
+    def __init__(self):
+        signal.signal(signal.SIGINT, self.terminate)
+        signal.signal(signal.SIGTERM, self.terminate)
+
+    def terminate(self, *args):
+        self.exit = True
+
 
 def rtl_433_listen():
     """Listen to all messages in a loop forever."""
+
+    _LOGGER.info("Start of lya daemon")
 
     try:
         with open(JSON_FN, "r") as f:
@@ -118,8 +134,8 @@ def rtl_433_listen():
     except FileNotFoundError:
         db = {'Sensor1': [], 'Sensor2': [], 'Unknown': []}
 
-    # Loop forever
-    while True:
+    sig = SigHandler()
+    while not sig.exit:
         try:
             # Open the HTTP (line) streaming API of JSON events
             for chunk in stream_lines():
@@ -133,6 +149,10 @@ def rtl_433_listen():
         except requests.ConnectionError:
             _LOGGER.info('Connection failed, retrying...')
             sleep(5)
+
+    _LOGGER.info("Exiting lya daemon")
+    with open(JSON_FN, "w") as f:
+        json.dump(db, f, indent=4)
 
 
 if __name__ == "__main__":
