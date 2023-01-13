@@ -12,6 +12,9 @@ from datetime import datetime, timedelta
 import logging
 from logging.handlers import RotatingFileHandler
 import signal
+import sys
+import os
+import shutil
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,16 +57,9 @@ def stream_lines():
         pass
 
 
-def handle_event(line, db):
-    ok_flag = False
+def handle_event(line, lst):
     try:
-        # Decode the message as JSON
         data = json.loads(line)
-
-        # data:
-        # {'time': '2022-12-18 19:20:37', 'model': 'Bresser-3CH', 'id': 250, 'channel': 2, 'battery_ok': 1,
-        # 'temperature_C': 19.16667, 'humidity': 34, 'mic': 'CHECKSUM'}
-        #
 
         # Round to minute, be robust if microseconds are included or not, check for decimal point
         time_format = "%Y-%m-%d %H:%M:%S.%f" if '.' in data['time'] else "%Y-%m-%d %H:%M:%S"
@@ -83,76 +79,88 @@ def handle_event(line, db):
 
         # Avoid duplicate time stamped data (they often come in pair due to sensor transmitting)
         # For generator expression, see https://stackoverflow.com/questions/8653516/python-list-of-dictionaries-search
-        if next((item for item in db[label] if item['time'] == data['time']), None) is None:
-            db[label].append(data)
+        if next((item for item in lst[label] if item['time'] == data['time']), None) is None:
+            lst[label].append(data)
 
         # Remove all elements older than 7 day
-        for k in db.keys():
-            if db[k] and k == label:
-                newest = datetime.strptime(db[k][-1]['time'], '%Y-%m-%d %H:%M:%S')
-                while (newest - datetime.strptime(db[k][0]['time'], '%Y-%m-%d %H:%M:%S')).days >= 7:
-                    db[k] = db[k][1:]
+        for k in lst.keys():
+            if lst[k] and k == label:
+                newest = datetime.strptime(lst[k][-1]['time'], '%Y-%m-%d %H:%M:%S')
+                while (newest - datetime.strptime(lst[k][0]['time'], '%Y-%m-%d %H:%M:%S')).days >= 7:
+                    lst[k] = lst[k][1:]
 
-        ok_flag = True
-        return db
+        return lst
 
     except KeyError:
-        # Ignore unknown message data and continue
         pass
 
     except ValueError as e:
-        # Warn on decoding errors
         _LOGGER.debug(f'Event format not recognized: {e}')
 
-    finally:
-        if ok_flag:
-            with open(JSON_FN, "w") as f:
-                json.dump(db, f, indent=4)
+
+class LyaDB:
+    def __init__(self, fn):
+        self.fn = fn
+        self.fn_bck = self.fn + ".bck"
+
+        self.open(self.fn)
+        if self.db is None:
+            self.open(self.fn_bck)
+            if self.db is None:
+                self.db = {'Sensor1': [], 'Sensor2': [], 'Unknown': []}
+
+    def open(self, fn):
+        try:
+            with open(fn, "r") as f:
+                self.db = json.load(f)
+                if not self.db:
+                    self.db = None
+        except FileNotFoundError:
+            self.db = None
+
+    def save(self):
+        # save a backup copy of existing file, then
+        if os.path.exists(self.fn):
+            shutil.move(self.fn, self.fn_bck)
+
+        with open(self.fn, "w") as f:
+            json.dump(self.db, f, indent=4)
+            f.flush()
 
 
 class SigHandler:
-    exit = False
-
-    def __init__(self):
-        signal.signal(signal.SIGINT, self.terminate)
+    def __init__(self, db):
+        # systemctl will send SIGUP + SIGTERM on stop/restart, eventually SIGKILL, handle gracefully
+        self.db = db
+        signal.signal(signal.SIGHUP, self.terminate)
         signal.signal(signal.SIGTERM, self.terminate)
 
     def terminate(self, *args):
-        self.exit = True
+        _LOGGER.info("Exiting lya daemon")
+        self.db.save()
+        sys.exit(0)
 
 
 def rtl_433_listen():
     """Listen to all messages in a loop forever."""
 
     _LOGGER.info("Start of lya daemon")
+    lya_db = LyaDB(JSON_FN)
+    sig = SigHandler(lya_db)
 
-    try:
-        with open(JSON_FN, "r") as f:
-            db = json.load(f)
-        if not db:
-            db = {'Sensor1': [], 'Sensor2': [], 'Unknown': []}
-    except FileNotFoundError:
-        db = {'Sensor1': [], 'Sensor2': [], 'Unknown': []}
-
-    sig = SigHandler()
-    while not sig.exit:
+    while True:
         try:
             # Open the HTTP (line) streaming API of JSON events
             for chunk in stream_lines():
                 chunk = chunk.rstrip()
                 if not chunk:
-                    # filter out keep-alive empty lines
-                    continue
-                # Decode the JSON message
-                db = handle_event(chunk, db)
+                    continue  # filter out keep-alive empty lines
+                lya_db.db = handle_event(chunk, lya_db.db)
+                lya_db.save()
 
         except requests.ConnectionError:
             _LOGGER.info('Connection failed, retrying...')
             sleep(5)
-
-    _LOGGER.info("Exiting lya daemon")
-    with open(JSON_FN, "w") as f:
-        json.dump(db, f, indent=4)
 
 
 if __name__ == "__main__":
