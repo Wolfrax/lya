@@ -119,13 +119,20 @@ class LyaDB:
             self.db = None
 
     def save(self):
-        # save a backup copy of existing file, then
-        if os.path.exists(self.fn):
-            shutil.move(self.fn, self.fn_bck)
+        try:
+            # First save to a temporary file, then save a backup of original file, then move the tmp-file to target
+            with open(self.fn + "_tmp", "w") as f:
+                json.dump(self.db, f)
+                f.flush()
 
-        with open(self.fn, "w") as f:
-            json.dump(self.db, f, indent=4)
-            f.flush()
+            if os.path.exists(self.fn):
+                shutil.move(self.fn, self.fn_bck)
+
+            if os.path.exists(self.fn + "_tmp"):
+                shutil.move(self.fn + "_tmp", self.fn)
+        except:
+            _LOGGER.error("Error saving file")
+
 
 
 class SigHandler:
