@@ -73,6 +73,7 @@ def handle_event(line, lst):
             label = "Sensor2"
         else:
             label = "Unknown"
+            _LOGGER.warning('Unknown mode: {}'.format(data["model"]))
 
         if data['battery_ok'] != 1 and (label == "Sensor1" or label == "Sensor2"):
             _LOGGER.warning("Battery status: {] for {}".format(data['battery_ok'], label))
@@ -91,17 +92,23 @@ def handle_event(line, lst):
 
         return lst
 
-    except KeyError:
-        pass
+    except (TypeError, KeyError) as e:
+        _LOGGER.warning('handle_event error: {} - {}'.format(e, line))
+        return lst
 
     except ValueError as e:
-        _LOGGER.debug(f'Event format not recognized: {e}')
+        _LOGGER.warning(f'Event format not recognized: {e}')
+        return lst
 
 
 class LyaDB:
     def __init__(self, fn):
         self.fn = fn
         self.fn_bck = self.fn + ".bck"
+
+        # systemctl will send SIGUP + SIGTERM on stop/restart, eventually SIGKILL, handle gracefully
+        signal.signal(signal.SIGHUP, self.terminate)
+        signal.signal(signal.SIGTERM, self.terminate)
 
         self.open(self.fn)
         if self.db is None:
@@ -133,18 +140,9 @@ class LyaDB:
         except:
             _LOGGER.error("Error saving file")
 
-
-
-class SigHandler:
-    def __init__(self, db):
-        # systemctl will send SIGUP + SIGTERM on stop/restart, eventually SIGKILL, handle gracefully
-        self.db = db
-        signal.signal(signal.SIGHUP, self.terminate)
-        signal.signal(signal.SIGTERM, self.terminate)
-
     def terminate(self, *args):
         _LOGGER.info("Exiting lya daemon")
-        self.db.save()
+        self.save()
         sys.exit(0)
 
 
@@ -153,7 +151,6 @@ def rtl_433_listen():
 
     _LOGGER.info("Start of lya daemon")
     lya_db = LyaDB(JSON_FN)
-    sig = SigHandler(lya_db)
 
     while True:
         try:
@@ -163,11 +160,15 @@ def rtl_433_listen():
                 if not chunk:
                     continue  # filter out keep-alive empty lines
                 lya_db.db = handle_event(chunk, lya_db.db)
-                lya_db.save()
+                if lya_db.db is None:
+                    _LOGGER.warning('lya_db is None, reopening {}'.format(lya_db.fn))
+                    lya_db = LyaDB(JSON_FN)
+                else:
+                    lya_db.save()
 
         except requests.ConnectionError:
             _LOGGER.info('Connection failed, retrying...')
-            sleep(5)
+            sleep(60)
 
 
 if __name__ == "__main__":
