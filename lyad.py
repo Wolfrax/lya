@@ -73,7 +73,7 @@ def handle_event(line, lst):
             label = "Sensor2"
         else:
             label = "Unknown"
-            _LOGGER.warning('Unknown mode: {}'.format(data["model"]))
+            _LOGGER.warning('Unknown data: {}'.format(data))
 
         if data['battery_ok'] != 1 and (label == "Sensor1" or label == "Sensor2"):
             _LOGGER.warning("Battery status: {] for {}".format(data['battery_ok'], label))
